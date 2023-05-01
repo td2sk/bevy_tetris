@@ -10,29 +10,39 @@ const Y_LENGTH: u32 = 18;
 const SCREEN_WIDTH: u32 = UNIT_WIDTH * X_LENGTH;
 const SCREEN_HEIGHT: u32 = UNIT_HEIGHT * Y_LENGTH;
 
+#[derive(Component)]
 struct Position {
     x: i32,
     y: i32,
 }
 
+#[derive(Component)]
 struct RelativePosition {
     x: i32,
     y: i32,
 }
 
+#[derive(Component)]
 struct Fix;
 
+#[derive(Component)]
 struct Free;
 
-struct Materials {
-    colors: Vec<Handle<ColorMaterial>>,
+#[derive(Resource)]
+struct Colors {
+    colors: Vec<Color>,
 }
 
+#[derive(Resource)]
 struct BlockPatterns(Vec<Vec<(i32, i32)>>);
 
+#[derive(Resource)]
 struct GameTimer(Timer);
+
+#[derive(Resource)]
 struct InputTimer(Timer);
 
+#[derive(Resource)]
 struct GameBoard(Vec<Vec<bool>>);
 
 struct NewBlockEvent;
@@ -47,7 +57,7 @@ fn next_block(block_patterns: &Vec<Vec<(i32, i32)>>) -> Vec<(i32, i32)> {
     block_patterns[pattern_index].clone()
 }
 
-fn next_color(colors: &Vec<Handle<ColorMaterial>>) -> Handle<ColorMaterial> {
+fn next_color(colors: &Vec<Color>) -> Color {
     let mut rng = rand::thread_rng();
     let mut color_index: usize = rng.gen();
     color_index %= colors.len();
@@ -56,26 +66,20 @@ fn next_color(colors: &Vec<Handle<ColorMaterial>>) -> Handle<ColorMaterial> {
 }
 
 fn spawn_block(
-    commands: &mut Commands,
-    materials: Res<Materials>,
+    mut commands: Commands,
+    colors: Res<Colors>,
     block_patterns: Res<BlockPatterns>,
-    new_block_events: Res<Events<NewBlockEvent>>,
-    mut new_block_events_reader: Local<EventReader<NewBlockEvent>>,
-    mut game_board: ResMut<GameBoard>,
+    mut new_block_events_reader: EventReader<NewBlockEvent>,
+    game_board: Res<GameBoard>,
     mut gameover_events: ResMut<Events<GameOverEvent>>,
 ) {
-    if new_block_events_reader
-        .iter(&new_block_events)
-        .next()
-        .is_none()
-    {
+    if new_block_events_reader.iter().next().is_none() {
         return;
     }
 
     let new_block = next_block(&block_patterns.0);
-    let new_color = next_color(&materials.colors);
+    let new_color = next_color(&colors.colors);
 
-    // ブロックの初期位置
     let initial_x = X_LENGTH / 2;
     let initial_y = Y_LENGTH;
 
@@ -93,51 +97,50 @@ fn spawn_block(
 
     new_block.iter().for_each(|(r_x, r_y)| {
         spawn_block_element(
-            commands,
-            new_color.clone(),
+            &mut commands,
+            new_color,
             Position {
                 x: (initial_x as i32 + r_x),
                 y: (initial_y as i32 + r_y),
             },
             RelativePosition { x: *r_x, y: *r_y },
-        );
-    });
+        )
+    })
 }
 
 fn spawn_block_element(
     commands: &mut Commands,
-    color: Handle<ColorMaterial>,
+    color: Color,
     position: Position,
     relative_position: RelativePosition,
 ) {
-    commands
-        .spawn(SpriteBundle {
-            material: color,
-            ..Default::default()
-        })
-        .with(position)
-        .with(relative_position)
-        .with(Free)
-        .current_entity()
-        .unwrap();
+    let origin_x = UNIT_WIDTH as i32 / 2 - SCREEN_WIDTH as i32 / 2;
+    let origin_y = UNIT_HEIGHT as i32 / 2 - SCREEN_HEIGHT as i32 / 2;
+    commands.spawn((
+        SpriteBundle {
+            sprite: Sprite {
+                custom_size: Some(Vec2::new(UNIT_WIDTH as f32, UNIT_HEIGHT as f32)),
+                color,
+                ..default()
+            },
+            transform: Transform {
+                translation: Vec3::new(
+                    (origin_x + position.x as i32 * UNIT_WIDTH as i32) as f32,
+                    (origin_y + position.y as i32 * UNIT_HEIGHT as i32) as f32,
+                    0.0,
+                ),
+                ..default()
+            },
+            ..default()
+        },
+        position,
+        relative_position,
+        Free,
+    ));
 }
 
-fn setup(
-    commands: &mut Commands,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut new_block_events: ResMut<Events<NewBlockEvent>>,
-) {
+fn setup(mut commands: Commands, mut new_block_events: EventWriter<NewBlockEvent>) {
     commands.spawn(Camera2dBundle::default());
-    commands.insert_resource(Materials {
-        colors: vec![
-            materials.add(Color::rgb_u8(64, 230, 100).into()),
-            materials.add(Color::rgb_u8(220, 64, 90).into()),
-            materials.add(Color::rgb_u8(70, 150, 210).into()),
-            materials.add(Color::rgb_u8(220, 230, 70).into()),
-            materials.add(Color::rgb_u8(35, 220, 241).into()),
-            materials.add(Color::rgb_u8(240, 140, 70).into()),
-        ],
-    });
 
     new_block_events.send(NewBlockEvent);
 }
@@ -147,31 +150,26 @@ fn position_transform(mut position_query: Query<(&Position, &mut Transform, &mut
     let origin_y = UNIT_HEIGHT as i32 / 2 - SCREEN_HEIGHT as i32 / 2;
     position_query
         .iter_mut()
-        .for_each(|(pos, mut transform, mut sprite)| {
+        .for_each(|(pos, mut transform, mut _sprite)| {
             transform.translation = Vec3::new(
                 (origin_x + pos.x as i32 * UNIT_WIDTH as i32) as f32,
                 (origin_y + pos.y as i32 * UNIT_HEIGHT as i32) as f32,
                 0.0,
             );
-            sprite.size = Vec2::new(UNIT_WIDTH as f32, UNIT_HEIGHT as f32)
         });
 }
 
-fn game_timer(
-    time: Res<Time>,
-    mut game_timer: ResMut<GameTimer>,
-    mut input_timer: ResMut<InputTimer>,
-) {
-    game_timer.0.tick(time.delta_seconds());
-    input_timer.0.tick(time.delta_seconds());
+fn game_timer(time: Res<Time>, mut timer: ResMut<GameTimer>, mut input_timer: ResMut<InputTimer>) {
+    timer.0.tick(time.delta());
+    input_timer.0.tick(time.delta());
 }
 
 fn block_fall(
-    commands: &mut Commands,
+    mut commands: Commands,
     timer: ResMut<GameTimer>,
     mut block_query: Query<(Entity, &mut Position, &Free)>,
     mut game_board: ResMut<GameBoard>,
-    mut new_block_events: ResMut<Events<NewBlockEvent>>,
+    mut new_block_events: EventWriter<NewBlockEvent>,
 ) {
     if !timer.0.finished() {
         return;
@@ -182,21 +180,20 @@ fn block_fall(
             return false;
         }
 
-        // yが0、または一つ下にブロックがすでに存在する
         pos.y == 0 || game_board.0[(pos.y - 1) as usize][pos.x as usize]
     });
 
     if cannot_fall {
         block_query.iter_mut().for_each(|(entity, pos, _)| {
-            commands.remove_one::<Free>(entity);
-            commands.insert_one(entity, Fix);
+            commands.entity(entity).remove::<Free>();
+            commands.entity(entity).insert(Fix);
             game_board.0[pos.y as usize][pos.x as usize] = true;
         });
         new_block_events.send(NewBlockEvent);
     } else {
         block_query.iter_mut().for_each(|(_, mut pos, _)| {
             pos.y -= 1;
-        });
+        })
     }
 }
 
@@ -219,8 +216,7 @@ fn block_horizontal_move(
             if pos.x == 0 {
                 return false;
             }
-
-            !game_board.0[(pos.y) as usize][pos.x as usize - 1]
+            !game_board.0[(pos.y) as usize][(pos.x - 1) as usize]
         });
 
         if ok_move_left {
@@ -240,7 +236,7 @@ fn block_horizontal_move(
                 return false;
             }
 
-            !game_board.0[(pos.y) as usize][pos.x as usize + 1]
+            !game_board.0[(pos.y) as usize][(pos.x + 1) as usize]
         });
 
         if ok_move_right {
@@ -295,7 +291,6 @@ fn block_rotate(
     }
 
     fn calc_rotated_pos(pos: &Position, r_pos: &RelativePosition) -> ((i32, i32), (i32, i32)) {
-        // cos,-sin,sin,cos (-90)
         let rot_matrix = vec![vec![0, 1], vec![-1, 0]];
 
         let origin_pos_x = pos.x - r_pos.x;
@@ -307,7 +302,7 @@ fn block_rotate(
         let new_pos_y = origin_pos_y + new_r_pos_y;
 
         ((new_pos_x, new_pos_y), (new_r_pos_x, new_r_pos_y))
-    };
+    }
 
     let rotable = free_block_query.iter_mut().all(|(_, pos, r_pos, _)| {
         let ((new_pos_x, new_pos_y), _) = calc_rotated_pos(&pos, &r_pos);
@@ -340,7 +335,7 @@ fn block_rotate(
 }
 
 fn delete_line(
-    commands: &mut Commands,
+    mut commands: Commands,
     timer: ResMut<GameTimer>,
     mut game_board: ResMut<GameBoard>,
     mut fixed_block_query: Query<(Entity, &mut Position, &Fix)>,
@@ -385,7 +380,7 @@ fn delete_line(
         .iter_mut()
         .for_each(|(entity, mut pos, _)| {
             if delete_line_set.get(&(pos.y as u32)).is_some() {
-                commands.despawn(entity);
+                commands.entity(entity).despawn();
             } else {
                 game_board.0[pos.y as usize][pos.x as usize] = false;
                 pos.y = new_y[pos.y as usize];
@@ -395,7 +390,7 @@ fn delete_line(
 }
 
 fn gameover(
-    commands: &mut Commands,
+    mut commands: Commands,
     gameover_events: Res<Events<GameOverEvent>>,
     mut game_board: ResMut<GameBoard>,
     mut all_block_query: Query<(Entity, &mut Position)>,
@@ -412,51 +407,67 @@ fn gameover(
     }
 
     game_board.0 = vec![vec![false; 25]; 25];
-    all_block_query.iter_mut().for_each(|(ent, _)| {
-        commands.despawn(ent);
+    all_block_query.iter_mut().for_each(|(entity, _)| {
+        commands.entity(entity).despawn();
     });
 
     new_block_events.send(NewBlockEvent);
 }
 
 fn main() {
-    App::build()
-        .add_resource(WindowDescriptor {
-            title: "Tetris".to_string(),
-            width: SCREEN_WIDTH as f32,
-            height: SCREEN_HEIGHT as f32,
-            ..Default::default()
+    let window = Window {
+        title: "tetris".to_string(),
+        resolution: (SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32).into(),
+        resizable: false,
+        ..default()
+    };
+    let primary_window = Some(window);
+    App::new()
+        .insert_resource(Colors {
+            colors: vec![
+                Color::rgb_u8(64, 230, 100).into(),
+                Color::rgb_u8(220, 64, 90).into(),
+                Color::rgb_u8(70, 150, 210).into(),
+                Color::rgb_u8(220, 230, 70).into(),
+                Color::rgb_u8(35, 220, 241).into(),
+                Color::rgb_u8(240, 140, 70).into(),
+            ],
         })
-        .add_resource(BlockPatterns(vec![
-            vec![(0, 0), (0, -1), (0, 1), (0, 2)],  // I
-            vec![(0, 0), (0, -1), (0, 1), (-1, 1)], // L
-            vec![(0, 0), (0, -1), (0, 1), (1, 1)],  // 逆L
-            vec![(0, 0), (0, -1), (1, 0), (1, 1)],  // Z
-            vec![(0, 0), (1, 0), (0, 1), (1, -1)],  // 逆Z
-            vec![(0, 0), (0, 1), (1, 0), (1, 1)],   // 四角
-            vec![(0, 0), (-1, 0), (1, 0), (0, 1)],  // T
+        .insert_resource(BlockPatterns(vec![
+            vec![(0, 0), (0, -1), (0, 1), (0, 2)],
+            vec![(0, 0), (0, -1), (0, 1), (-1, 1)],
+            vec![(0, 0), (0, -1), (0, 1), (1, 1)],
+            vec![(0, 0), (0, -1), (1, 0), (1, 1)],
+            vec![(0, 0), (1, 0), (0, 1), (1, -1)],
+            vec![(0, 0), (0, 1), (1, 0), (1, 1)],
+            vec![(0, 0), (-1, 0), (1, 0), (0, 1)],
         ]))
-        .add_resource(GameTimer(Timer::new(
+        .insert_resource(GameTimer(Timer::new(
             std::time::Duration::from_millis(400),
-            true,
+            TimerMode::Repeating,
         )))
-        .add_resource(InputTimer(Timer::new(
+        .insert_resource(InputTimer(Timer::new(
             std::time::Duration::from_millis(100),
-            true,
+            TimerMode::Repeating,
         )))
-        .add_resource(GameBoard(vec![vec![false; 25]; 25]))
-        .add_plugins(DefaultPlugins)
+        .insert_resource(GameBoard(vec![vec![false; 25 as usize]; 25 as usize]))
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window,
+            ..default()
+        }))
         .add_event::<NewBlockEvent>()
         .add_event::<GameOverEvent>()
-        .add_startup_system(setup.system())
-        .add_system(gameover.system())
-        .add_system(delete_line.system())
-        .add_system(spawn_block.system())
-        .add_system(position_transform.system())
-        .add_system(game_timer.system())
-        .add_system(block_fall.system())
-        .add_system(block_horizontal_move.system())
-        .add_system(block_vertical_move.system())
-        .add_system(block_rotate.system())
-        .run();
+        .add_startup_systems((setup,))
+        .add_systems((
+            gameover,
+            delete_line,
+            spawn_block,
+            position_transform,
+            game_timer,
+            block_fall,
+            block_horizontal_move,
+            block_vertical_move,
+            block_rotate,
+        ))
+        .run()
 }

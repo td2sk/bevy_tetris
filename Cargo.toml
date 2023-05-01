@@ -2,10 +2,11 @@
 name = "bevy_tetris"
 version = "0.1.0"
 authors = ["makibishi <makibishi0212@gmail.com>"]
-edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2021"
 
 [dependencies]
-bevy = "0.4"
-rand = "0.7.3"
+bevy = "0.10.1"
+rand = "0.8.5"
+
+[profile.dev.package."*"]
+opt-level = 3
